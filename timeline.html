@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spotify Playlist Timeline</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #fff; color: #222;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 30px 20px;
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 20px; margin-bottom: 16px; }
+
+    /* Auth & Input */
+    .setup { margin-bottom: 24px; }
+    .setup label { font-size: 13px; color: #666; display: block; margin-bottom: 4px; }
+    .setup input {
+      border: 1px solid #ccc; border-radius: 4px; padding: 6px 10px;
+      font-size: 13px; width: 260px; margin-right: 8px; margin-bottom: 8px;
+    }
+    .setup button {
+      background: #333; color: #fff; border: none; border-radius: 4px;
+      padding: 7px 16px; font-size: 13px; cursor: pointer;
+    }
+    .setup button:hover { background: #555; }
+    .setup button:disabled { background: #aaa; cursor: default; }
+    .status-msg { font-size: 12px; color: #999; margin-top: 6px; }
+    .status-msg.error { color: #c00; }
+    .hint { font-size: 11px; color: #aaa; margin-top: 4px; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 1px solid #ccc; }
+    .tab {
+      padding: 8px 20px; font-size: 13px; cursor: pointer;
+      border: 1px solid transparent; border-bottom: none;
+      background: #f9f9f9; color: #888; border-radius: 4px 4px 0 0;
+      margin-bottom: -1px;
+    }
+    .tab.active { background: #fff; color: #222; border-color: #ccc; font-weight: 500; }
+    .tab-content { display: none; padding-top: 20px; }
+    .tab-content.active { display: block; }
+
+    /* Timeline shared */
+    .year-axis {
+      display: flex; border-bottom: 1px solid #ccc;
+      padding-bottom: 4px; margin-left: 160px;
+    }
+    .year-label { flex: 1; text-align: center; font-size: 11px; color: #999; }
+    .grid-container { position: relative; margin-left: 160px; }
+    .grid-lines {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; pointer-events: none;
+    }
+    .grid-line { flex: 1; border-left: 1px solid #f0f0f0; }
+
+    /* Songs tab - dots */
+    .song-row {
+      display: flex; align-items: center; height: 28px; position: relative;
+      border-bottom: 1px solid #f8f8f8;
+    }
+    .song-info {
+      position: absolute; left: -160px; width: 150px;
+      font-size: 11px; color: #555;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .dot-track { flex: 1; position: relative; height: 20px; }
+    .song-dot {
+      position: absolute; width: 8px; height: 8px;
+      background: #333; border-radius: 50%;
+      top: 50%; transform: translate(-50%, -50%);
+      cursor: default;
+    }
+    .song-dot:hover { background: #000; transform: translate(-50%, -50%) scale(1.5); }
+
+    /* Tooltip */
+    .tooltip {
+      position: fixed; background: #333; color: #fff; padding: 6px 10px;
+      border-radius: 4px; font-size: 11px; pointer-events: none;
+      z-index: 100; display: none; max-width: 300px; line-height: 1.4;
+    }
+
+    /* Artists tab - bars */
+    .artist-row {
+      display: flex; align-items: center; height: 36px; position: relative;
+      border-bottom: 1px solid #f5f5f5;
+    }
+    .artist-info {
+      position: absolute; left: -160px; width: 150px;
+      font-size: 12px; color: #333;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .bar-track { flex: 1; position: relative; height: 20px; }
+    .activity-bar {
+      position: absolute; height: 100%; border-radius: 3px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; color: #fff; min-width: 20px; cursor: default;
+    }
+    .release-tag {
+      font-size: 9px; background: rgba(0,0,0,0.25); padding: 1px 5px;
+      border-radius: 6px; margin-left: 4px; white-space: nowrap;
+    }
+
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.85); display: flex;
+      align-items: center; justify-content: center;
+      font-size: 14px; color: #666; z-index: 200;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Spotify Playlist Timeline</h1>
+
+    <div class="setup">
+      <div>
+        <label>Playlist URL or ID</label>
+        <input id="playlistInput" placeholder="https://open.spotify.com/playlist/... or ID" value="6YKfYjbq0N197gVNswdpi3">
+      </div>
+      <div style="margin-top:8px">
+        <label>Access Token <span style="color:#aaa">(Client Credentials or paste from developer console)</span></label>
+        <input id="tokenInput" type="password" placeholder="Bearer token" style="width:400px">
+      </div>
+      <p class="hint">获取 token: 用 client_id 和 client_secret 调用 POST https://accounts.spotify.com/api/token，grant_type=client_credentials</p>
+      <div style="margin-top:10px">
+        <button id="loadBtn" onclick="loadPlaylist()">Load Playlist</button>
+      </div>
+      <p class="status-msg" id="statusMsg"></p>
+    </div>
+
+    <div id="mainContent" class="hidden">
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('songs')">Songs Timeline</div>
+        <div class="tab" onclick="switchTab('artists')">Artists Timeline</div>
+      </div>
+      <div id="songsTab" class="tab-content active"></div>
+      <div id="artistsTab" class="tab-content"></div>
+    </div>
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+  <div class="loading-overlay hidden" id="loading">Loading...</div>
+
+  <script>
+    const tooltip = document.getElementById('tooltip');
+    document.addEventListener('mousemove', e => {
+      tooltip.style.left = (e.clientX + 12) + 'px';
+      tooltip.style.top = (e.clientY - 10) + 'px';
+    });
+
+    function showTooltip(text) { tooltip.textContent = text; tooltip.style.display = 'block'; }
+    function hideTooltip() { tooltip.style.display = 'none'; }
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab').forEach((t, i) => {
+        t.classList.toggle('active', (name === 'songs' ? i === 0 : i === 1));
+      });
+      document.getElementById('songsTab').classList.toggle('active', name === 'songs');
+      document.getElementById('artistsTab').classList.toggle('active', name === 'artists');
+    }
+
+    function extractPlaylistId(input) {
+      const m = input.match(/playlist\/([a-zA-Z0-9]+)/);
+      return m ? m[1] : input.trim();
+    }
+
+    async function spotifyGet(url, token, retries = 3) {
+      const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+      if (res.status === 429 && retries > 0) {
+        const wait = (parseInt(res.headers.get('Retry-After')) || 2) * 1000;
+        console.log(`Rate limited, waiting ${wait}ms...`);
+        await delay(wait);
+        return spotifyGet(url, token, retries - 1);
+      }
+      if (!res.ok) throw new Error(`Spotify API ${res.status}: ${res.statusText}`);
+      return res.json();
+    }
+
+    function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function getAllPlaylistTracks(playlistId, token) {
+      let tracks = [];
+      let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+      while (url) {
+        const data = await spotifyGet(url, token);
+        tracks.push(...data.items.filter(i => i.track));
+        url = data.next;
+      }
+      return tracks;
+    }
+
+    // Returns { latestDate, earliestDate, totalCount } with minimal API calls
+    // Spotify returns albums newest-first by default
+    async function getArtistActivitySpan(artistId, token) {
+      // First page: get newest + total count
+      const first = await spotifyGet(
+        `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album,single&limit=50`, token
+      );
+      const total = first.total;
+      if (total === 0) return { latestDate: null, earliestDate: null, totalCount: 0 };
+
+      const latestDate = first.items[0]?.release_date || null;
+
+      // If all fit in one page, earliest is last item
+      if (total <= 50) {
+        const earliestDate = first.items[first.items.length - 1]?.release_date || null;
+        return { latestDate, earliestDate, totalCount: total };
+      }
+
+      // Otherwise fetch only the last page for earliest
+      const lastOffset = total - 1;
+      await delay(300);
+      const last = await spotifyGet(
+        `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album,single&limit=1&offset=${lastOffset}`, token
+      );
+      const earliestDate = last.items[0]?.release_date || latestDate;
+      return { latestDate, earliestDate, totalCount: total };
+    }
+
+    function parseDate(dateStr) {
+      if (!dateStr) return { year: 0, month: 1, day: 1, raw: '' };
+      const parts = dateStr.split('-');
+      return {
+        year: parseInt(parts[0]),
+        month: parts[1] ? parseInt(parts[1]) : 1,
+        day: parts[2] ? parseInt(parts[2]) : 1,
+        raw: dateStr
+      };
+    }
+
+    function dateToFraction(d) {
+      return d.year + (d.month - 1) / 12 + (d.day - 1) / 365;
+    }
+
+    function formatDate(dateStr) {
+      const d = parseDate(dateStr);
+      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      if (dateStr.length === 4) return dateStr;
+      if (dateStr.length === 7) return monthNames[d.month - 1] + ' ' + d.year;
+      return monthNames[d.month - 1] + ' ' + d.day + ', ' + d.year;
+    }
+
+    // Popularity → blue shade (light=low, dark=high)
+    function popColor(pop) {
+      const t = pop / 100;
+      const r = Math.round(200 - t * 160);
+      const g = Math.round(215 - t * 155);
+      const b = Math.round(255 - t * 55);
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function buildYearAxis(container, startY, endY) {
+      const axis = document.createElement('div');
+      axis.className = 'year-axis';
+      const gridContainer = document.createElement('div');
+      gridContainer.className = 'grid-container';
+      const gridLines = document.createElement('div');
+      gridLines.className = 'grid-lines';
+
+      for (let y = startY; y <= endY; y++) {
+        const lbl = document.createElement('div');
+        lbl.className = 'year-label';
+        lbl.textContent = y % 5 === 0 || y === startY || y === endY ? y : '';
+        axis.appendChild(lbl);
+        const line = document.createElement('div');
+        line.className = 'grid-line';
+        gridLines.appendChild(line);
+      }
+      gridContainer.appendChild(gridLines);
+      container.appendChild(axis);
+      return { gridContainer, totalYears: endY - startY, startY };
+    }
+
+    function renderSongsTabFromData(songsRaw) {
+      const container = document.getElementById('songsTab');
+      container.innerHTML = '';
+
+      const songs = songsRaw.map(s => ({
+        name: s.name,
+        artist: s.artist,
+        date: s.date,
+        dateParsed: parseDate(s.date)
+      })).filter(s => s.dateParsed.year > 0)
+        .sort((a, b) => dateToFraction(a.dateParsed) - dateToFraction(b.dateParsed));
+
+      const minY = Math.floor(Math.min(...songs.map(s => s.dateParsed.year)));
+      const maxY = Math.ceil(Math.max(...songs.map(s => s.dateParsed.year))) + 1;
+      const { gridContainer, totalYears, startY } = buildYearAxis(container, minY, maxY);
+
+      const rows = document.createElement('div');
+      songs.forEach(s => {
+        const row = document.createElement('div');
+        row.className = 'song-row';
+        const info = document.createElement('div');
+        info.className = 'song-info';
+        info.textContent = s.name;
+        info.title = s.name;
+        row.appendChild(info);
+
+        const track = document.createElement('div');
+        track.className = 'dot-track';
+        const dot = document.createElement('div');
+        dot.className = 'song-dot';
+        const frac = dateToFraction(s.dateParsed);
+        dot.style.left = ((frac - startY) / totalYears * 100) + '%';
+        dot.addEventListener('mouseenter', () =>
+          showTooltip(`${s.name}\n${s.artist}\n${formatDate(s.date)}`)
+        );
+        dot.addEventListener('mouseleave', hideTooltip);
+        track.appendChild(dot);
+        row.appendChild(track);
+        rows.appendChild(row);
+      });
+
+      gridContainer.appendChild(rows);
+      container.appendChild(gridContainer);
+    }
+
+    function renderArtistsTab(artistsData) {
+      const container = document.getElementById('artistsTab');
+      container.innerHTML = '';
+
+      // Sort by earliest activity
+      artistsData.sort((a, b) => a.startYear - b.startYear);
+
+      const minY = Math.floor(Math.min(...artistsData.map(a => a.startYear)));
+      const maxY = Math.ceil(Math.max(...artistsData.map(a => a.endYear))) + 1;
+      const { gridContainer, totalYears, startY } = buildYearAxis(container, minY, maxY);
+
+      const rows = document.createElement('div');
+      artistsData.forEach(a => {
+        const row = document.createElement('div');
+        row.className = 'artist-row';
+        const info = document.createElement('div');
+        info.className = 'artist-info';
+        info.textContent = a.name;
+        info.title = a.name;
+        row.appendChild(info);
+
+        const track = document.createElement('div');
+        track.className = 'bar-track';
+        const bar = document.createElement('div');
+        bar.className = 'activity-bar';
+        const left = (a.startYear - startY) / totalYears * 100;
+        const width = Math.max((a.endYear - a.startYear) / totalYears * 100, 2);
+        bar.style.left = left + '%';
+        bar.style.width = width + '%';
+        bar.style.background = popColor(a.popularity);
+        bar.innerHTML = `${a.startYear}–${a.endYear}<span class="release-tag">${a.totalReleases} releases</span>`;
+        bar.addEventListener('mouseenter', () =>
+          showTooltip(`${a.name}\nPopularity: ${a.popularity}\nActive: ${a.startYear}–${a.endYear}\nReleases: ${a.totalReleases}`)
+        );
+        bar.addEventListener('mouseleave', hideTooltip);
+        track.appendChild(bar);
+        row.appendChild(track);
+        rows.appendChild(row);
+      });
+
+      gridContainer.appendChild(rows);
+      container.appendChild(gridContainer);
+
+      // Legend for colors
+      const legend = document.createElement('div');
+      legend.style.cssText = 'margin-top:12px;font-size:11px;color:#999;display:flex;align-items:center;gap:4px;';
+      legend.innerHTML = '<span>Popularity: </span>';
+      for (let p = 0; p <= 100; p += 5) {
+        const s = document.createElement('span');
+        s.style.cssText = `display:inline-block;width:8px;height:12px;background:${popColor(p)};`;
+        legend.appendChild(s);
+      }
+      legend.innerHTML += '<span style="margin-left:4px">0 → 100</span>';
+      container.appendChild(legend);
+    }
+
+    // LocalStorage helpers
+    const LS_KEY = 'spotify_timeline_cache';
+    function saveToLS(playlistId, token, songsData, artistsData) {
+      localStorage.setItem(LS_KEY, JSON.stringify({ playlistId, token, songsData, artistsData, savedAt: Date.now() }));
+    }
+    function loadFromLS() {
+      try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch { return null; }
+    }
+
+    // Extract minimal song data for storage
+    function extractSongsData(tracks) {
+      return tracks.filter(item => item.track).map(item => {
+        const t = item.track;
+        return {
+          name: t.name,
+          artist: t.artists.map(a => a.name).join(', '),
+          date: t.album.release_date
+        };
+      });
+    }
+
+    function renderFromCache(songsData, artistsData) {
+      renderSongsTabFromData(songsData);
+      renderArtistsTab(artistsData);
+      document.getElementById('mainContent').classList.remove('hidden');
+    }
+
+    // On page load: restore from cache
+    (function init() {
+      const cache = loadFromLS();
+      if (cache) {
+        if (cache.token) document.getElementById('tokenInput').value = cache.token;
+        if (cache.playlistId) document.getElementById('playlistInput').value = cache.playlistId;
+        if (cache.songsData && cache.artistsData) {
+          renderFromCache(cache.songsData, cache.artistsData);
+          document.getElementById('statusMsg').textContent =
+            `Loaded from cache (${cache.songsData.length} tracks, ${cache.artistsData.length} artists). Click "Load Playlist" to refresh.`;
+        }
+      }
+    })();
+
+    async function loadPlaylist() {
+      const token = document.getElementById('tokenInput').value.trim();
+      const playlistRaw = document.getElementById('playlistInput').value.trim();
+      const statusMsg = document.getElementById('statusMsg');
+      const loadBtn = document.getElementById('loadBtn');
+
+      if (!token) { statusMsg.textContent = 'Please enter an access token.'; statusMsg.className = 'status-msg error'; return; }
+      if (!playlistRaw) { statusMsg.textContent = 'Please enter a playlist URL or ID.'; statusMsg.className = 'status-msg error'; return; }
+
+      const playlistId = extractPlaylistId(playlistRaw);
+      loadBtn.disabled = true;
+      const loading = document.getElementById('loading');
+      loading.classList.remove('hidden');
+      statusMsg.className = 'status-msg';
+
+      try {
+        statusMsg.textContent = 'Fetching playlist tracks...';
+        const tracks = await getAllPlaylistTracks(playlistId, token);
+        statusMsg.textContent = `Got ${tracks.length} tracks. Fetching artist data...`;
+
+        // Collect unique artists
+        const artistMap = new Map();
+        tracks.forEach(item => {
+          if (!item.track) return;
+          item.track.artists.forEach(a => {
+            if (a.id && !artistMap.has(a.id)) artistMap.set(a.id, { id: a.id, name: a.name });
+          });
+        });
+
+        // Fetch artist details + albums sequentially with rate limiting
+        const artistIds = [...artistMap.keys()];
+        const artistsData = [];
+
+        for (let i = 0; i < artistIds.length; i++) {
+          const id = artistIds[i];
+          statusMsg.textContent = `Fetching artist data... ${i + 1}/${artistIds.length}`;
+
+          const [artist, span] = await Promise.all([
+            spotifyGet(`https://api.spotify.com/v1/artists/${id}`, token),
+            getArtistActivitySpan(id, token)
+          ]);
+          const startYear = span.earliestDate ? parseDate(span.earliestDate).year : 2000;
+          const endYear = span.latestDate ? parseDate(span.latestDate).year : 2000;
+          artistsData.push({
+            name: artist.name,
+            popularity: artist.popularity,
+            startYear,
+            endYear,
+            totalReleases: span.totalCount
+          });
+
+          // Rate limit: wait 500ms between each artist
+          if (i < artistIds.length - 1) await delay(500);
+        }
+
+        // Save to localStorage
+        const songsData = extractSongsData(tracks);
+        saveToLS(playlistId, token, songsData, artistsData);
+
+        // Render
+        renderSongsTabFromData(songsData);
+        renderArtistsTab(artistsData);
+        document.getElementById('mainContent').classList.remove('hidden');
+        statusMsg.textContent = `Loaded ${tracks.length} tracks, ${artistsData.length} artists.`;
+
+      } catch (err) {
+        statusMsg.textContent = 'Error: ' + err.message;
+        statusMsg.className = 'status-msg error';
+      } finally {
+        loadBtn.disabled = false;
+        loading.classList.add('hidden');
+      }
+    }
+  </script>
+</body>
+</html>
